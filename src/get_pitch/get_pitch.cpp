@@ -97,6 +97,7 @@ int main(int argc, const char *argv[]) {
   int median_len = stoi(args["--median"].asString());
   float med_tol = stof(args["--medtol"].asString());
   float refine_ms = stof(args["--refine"].asString());
+
   float frame_ms = stof(args["--framelen"].asString());
   float offset_ms = stof(args["--offset"].asString());
   bool hamming = args["--hamming"].asBool();
@@ -219,11 +220,12 @@ int main(int argc, const char *argv[]) {
   /// \DONE Refinament fi del període.
   /// La trama de 30 ms és necessària per trobar el període amb fiabilitat, però si el
   /// pitch varia dins de la trama el resultat és una mitjana. Un cop tenim el candidat T,
-  /// busquem el desplaçament l (entre T-3 i T+3 mostres) que maximitza la correlació
+  /// busquem el desplaçament l (entre T-5% i T+5%) que maximitza la correlació
   /// normalitzada entre dos segments curts (refine_ms), un a cada costat del centre de
   /// la trama i separats l mostres, i interpolem amb una paràbola.
   if (refine_ms > 0) {
     int N = rate * refine_ms / 1000;
+    for (int it = 0; it < 2; ++it)  // two passes: the second one starts from a better candidate
     for (int k = 0; k < n_frames; ++k) {
       if (f0[k] == 0) continue;
       int c = n_start + k * n_shift + n_len / 2;  // centre of the frame
@@ -237,7 +239,8 @@ int main(int argc, const char *argv[]) {
         }
         return (float) (ab / sqrt(aa * bb + 1e-20));
       };
-      int lmin = max(2, L - 3), lmax = L + 3;
+      int D = max(2, (int) round(0.05F * L));  // search range: +-5% of the period
+      int lmin = max(2, L - D), lmax = L + D;
       vector<float> v;
       for (int l = lmin; l <= lmax; ++l) v.push_back(nc(l));
       int i = max_element(v.begin(), v.end()) - v.begin();
