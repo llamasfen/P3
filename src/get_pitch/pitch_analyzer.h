@@ -5,6 +5,8 @@
 
 #include <vector>
 #include <algorithm>
+#include <memory>
+#include <ffft/FFTReal.h>
 
 namespace upc {
   const float MIN_F0 = 20.0F;    ///< Minimum value of pitch in Hertzs
@@ -44,6 +46,8 @@ namespace upc {
     float pot_threshold;       ///< threshold for power, in dB relative to pot_ref
     float clip_alpha;          ///< central clipping level (fraction of the frame maximum)
     float pot_ref;             ///< reference power (dB), maximum frame power of the file
+    unsigned int fftLen;       ///< FFT length used to compute the autocorrelation (power of 2 >= frameLen + npitch_max)
+    std::unique_ptr<ffft::FFTReal<float>> fft; ///< FFT object (precomputed twiddle factors)
 
     /// Computes correlation from lag=0 to r.size()
     void autocorrelation(const std::vector<float> &x, std::vector<float> &r) const;
@@ -74,6 +78,11 @@ namespace upc {
       pot_ref = 0.0F;
       set_f0_range(min_F0, max_F0);
       set_window(w);
+      // Zero padding to frameLen + npitch_max avoids the circular aliasing of the
+      // autocorrelation computed with the DFT
+      fftLen = 1;
+      while (fftLen < frameLen + npitch_max) fftLen *= 2;
+      fft.reset(new ffft::FFTReal<float>(fftLen));
     }
 
     /// Computes the features and the pitch candidate of a frame (no voicing decision)

@@ -29,12 +29,12 @@ Usage:
 
 Options:
     -v, --voiced FLOAT    Llindar de probabilitat de sonoritat del classificador logístic
-                          (0 = fer servir la regla de llindars -m, -1, -p) [default: 0.6]
+                          (0 = fer servir la regla de llindars -m, -1, -p) [default: 0.55]
     -m, --rmaxnorm FLOAT  Llindar de r[lag]/r[0] per a decisió sord/sonor [default: 0.4]
     -1, --r1norm FLOAT    Llindar de r[1]/r[0] per a decisió sord/sonor [default: 0.0]
     -p, --pot FLOAT       Llindar de potència (dB) relatiu a la trama més forta [default: -100]
-    -c, --clip FLOAT      Nivell de center clipping (fracció del màxim de la trama) [default: 0.3]
-    -l, --lowpass FLOAT   Freqüència de tall del filtre passa-baixos en Hz (0 = sense filtre) [default: 600]
+    -c, --clip FLOAT      Nivell de center clipping (fracció del màxim de la trama) [default: 0.25]
+    -l, --lowpass FLOAT   Freqüència de tall del filtre passa-baixos en Hz (0 = sense filtre) [default: 350]
     -w, --median INT      Longitud del filtre de mediana (1 = sense filtre) [default: 3]
     -t, --medtol FLOAT    El filtre de mediana només canvia el valor si s'allunya de la mediana
                           més d'aquesta fracció (0 = sempre) [default: 0.3]
@@ -183,13 +183,13 @@ int main(int argc, const char *argv[]) {
   static const int NF = 8;
   static const int OFFS[5] = {0, 2, 1, -1, -2};  // trames: k, k+2, k+1, k-1, k-2
   static const float W[5][NF] = {
-    {-0.0361933F, 38.8041F, 2.32819F, 1.85091F, 13.0927F, 0.0450061F, -0.864831F, -2.80501F},
-    {0.0115949F, 18.0919F, -1.63622F, 1.3584F, -26.4076F, 0.0158867F, -0.378127F, -1.94958F},
-    {0.0625253F, -6.56669F, -0.625628F, 1.87166F, -6.68702F, 0.0238843F, -1.71538F, -3.38568F},
-    {0.218176F, -3.08433F, 3.07662F, 1.58884F, -22.2711F, -0.0682284F, 0.331512F, -0.100415F},
-    {-0.0187213F, -1.74845F, -1.65701F, 1.00823F, 36.7328F, -0.00147695F, 0.243429F, 0.443494F}
+    {-0.0322787F, 43.4027F, 2.74795F, 1.40483F, 40.9129F, 0.0307864F, -1.1442F, -1.7693F},
+    {0.0203641F, 24.8514F, -2.31193F, 1.86897F, -22.7811F, 0.0121037F, -0.959087F, -2.99418F},
+    {0.0733075F, -5.15781F, -0.769768F, 2.12836F, -8.58159F, 0.00952805F, -1.45289F, -3.82169F},
+    {0.176837F, -13.5473F, 3.26452F, 1.70159F, -0.17777F, -0.00942055F, 1.22599F, 0.0310113F},
+    {-0.0177262F, -2.61114F, -2.18462F, 1.17981F, 27.4593F, -0.00157246F, 0.0218075F, 0.0823871F}
   };
-  static const float B = -43.2825F;
+  static const float B = -46.4327F;
   auto fvec = [&](int k) {
     const FrameFeatures &ff = feats[k];
     return array<float, NF>{ff.pot, ff.r1norm, ff.rmaxnorm, ff.nccf, ff.zcr, raw[k][0], raw[k][1], raw[k][2]};

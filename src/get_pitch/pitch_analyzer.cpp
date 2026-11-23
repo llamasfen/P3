@@ -9,13 +9,27 @@ using namespace std;
 /// Name space of UPC
 namespace upc {
   void PitchAnalyzer::autocorrelation(const vector<float> &x, vector<float> &r) const {
-    for (unsigned int l = 0; l < r.size(); ++l) {
-      /// \DONE Autocorrelació calculada
-      r[l] = 0.0F;
-      for (unsigned int n = 0; n < x.size()-l; ++n)
-        r[l] += x[n]*x[n+l];
-    }
-    if (r[0] == 0.0F) // to avoid log() and divide zero
+    /// \DONE Autocorrelació calculada.
+    /// En lloc de la suma directa r[l] = sum x[n] x[n+l], que costa O(N·L), es fa servir el
+    /// teorema de Wiener-Khinchin: l'autocorrelació és la transformada inversa de la densitat
+    /// espectral de potència |X(k)|^2. Amb la FFT el cost és O(M log M). El senyal s'omple
+    /// amb zeros fins a M >= N + L per evitar l'aliasing temporal de la correlació circular.
+    /// El resultat és idèntic al de la suma directa (llevat d'errors d'arrodoniment).
+    unsigned int M = fftLen;
+    vector<float> xp(M, 0.0F), X(M), p(M, 0.0F), rr(M);
+    copy(x.begin(), x.end(), xp.begin());
+    fft->do_fft(X.data(), xp.data());
+    // FFTReal layout: X[0..M/2] real parts, X[M/2+k] imaginary part of bin k (k=1..M/2-1)
+    p[0] = X[0] * X[0];
+    p[M/2] = X[M/2] * X[M/2];
+    for (unsigned int k = 1; k < M/2; ++k)
+      p[k] = X[k] * X[k] + X[M/2 + k] * X[M/2 + k];  // |X(k)|^2, imaginary part = 0
+    fft->do_ifft(p.data(), rr.data());
+    fft->rescale(rr.data());
+    for (unsigned int l = 0; l < r.size(); ++l)
+      r[l] = rr[l];
+
+    if (r[0] <= 0.0F) // to avoid log() and divide zero
       r[0] = 1e-10;
   }
 
@@ -60,8 +74,9 @@ namespace upc {
   }
 
   bool PitchAnalyzer::unvoiced(float pot, float r1norm, float rmaxnorm) const {
-    /// \DONE Decisió sord/sonor amb tres característiques:
-    /// potència relativa al màxim del fitxer, r[1]/r[0] i r[lag]/r[0]
+    /// \DONE Regla senzilla de decisió sord/sonor amb tres llindars: potència relativa al
+    /// màxim del fitxer, r[1]/r[0] i r[lag]/r[0]. És la primera versió de l'estimador; la
+    /// versió final (get_pitch.cpp) fa servir un classificador de regressió logística.
     if (pot - pot_ref < pot_threshold) return true;
     if (r1norm < r1norm_threshold) return true;
     if (rmaxnorm < rmaxnorm_threshold) return true;
@@ -87,8 +102,10 @@ namespace upc {
       if ((x[n] >= 0) != (x[n-1] >= 0)) ++nzc;
     ff.zcr = (float) nzc / (N - 1);
 
-    // Central clipping: the signal becomes closer to a train of deltas,
-    // so the autocorrelation peak at the pitch period is sharper
+    /// \DONE Preprocessat: center clipping.
+    /// La no linealitat elimina les mostres petites (|x| < clip_alpha·max) i resta el nivell a
+    /// la resta. El senyal s'assembla més a un tren de deltes de Dirac (excitació glotal),
+    /// s'atenua l'efecte dels formants i el pic de l'autocorrelació al període és més marcat.
     vector<float> xc(x);
     vector<float> r_orig(r);
     if (clip_alpha > 0) {
@@ -103,7 +120,10 @@ namespace upc {
       autocorrelation(xc, r);
     }
 
-    /// \DONE Màxim de l'autocorrelació entre npitch_min i npitch_max
+    /// \DONE Màxim de l'autocorrelació lluny de l'origen.
+    /// Es busca el màxim entre npitch_min (període del pitch màxim, 500 Hz) i npitch_max
+    /// (període del pitch mínim, 50 Hz). Es fa servir l'autocorrelació esbiaixada, que
+    /// atenua els retards llargs i així evita els errors de meitat de pitch.
     vector<float>::const_iterator iRMax = max_element(r.begin() + npitch_min, r.begin() + npitch_max);
     unsigned int lag = iRMax - r.begin();
     ff.rmaxnorm = r[lag] / r[0];
