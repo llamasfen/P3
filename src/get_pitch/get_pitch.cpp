@@ -40,6 +40,8 @@ Options:
                           més d'aquesta fracció (0 = sempre) [default: 0.3]
     -f, --framelen FLOAT  Longitud de la trama en ms [default: 30]
     -o, --offset FLOAT    Desplaçament del centre de la trama en ms [default: 0]
+    -r, --refine FLOAT    Longitud (ms) dels segments per refinar el període amb correlació
+                          normalitzada (0 = sense refinament) [default: 10]
     -F, --features FILE   Escriu les característiques de cada trama en aquest fitxer
     -H, --hamming         Finestra de Hamming (per defecte, rectangular)
     -h, --help  Show this screen
@@ -94,6 +96,7 @@ int main(int argc, const char *argv[]) {
   float fc = stof(args["--lowpass"].asString());
   int median_len = stoi(args["--median"].asString());
   float med_tol = stof(args["--medtol"].asString());
+  float refine_ms = stof(args["--refine"].asString());
   float frame_ms = stof(args["--framelen"].asString());
   float offset_ms = stof(args["--offset"].asString());
   bool hamming = args["--hamming"].asBool();
@@ -173,18 +176,23 @@ int main(int argc, const char *argv[]) {
 
   /// \DONE Decisió sord/sonor.
   /// Classificador de regressió logística entrenat amb la base de dades pitch_db/train.
-  /// Fa servir 5 característiques (potència relativa, r[1]/r[0], r[lag]/r[0], nccf i zcr)
-  /// de la trama actual, la següent i l'anterior (15 pesos + terme independent).
-  static const float W[15] = {
-    -0.0192862F, 41.8599F, 2.64222F, 1.66299F, 24.6315F,  // trama actual
-    0.123753F, 7.85405F, -0.660282F, 1.70917F, -27.7962F, // trama següent
-    0.169672F, -6.22347F, 2.13385F, 1.90999F, -12.2542F   // trama anterior
+  /// Per a cada trama fa servir 8 característiques: potència relativa, r[1]/r[0], r[lag]/r[0],
+  /// nccf i zcr del senyal filtrat, i potència relativa, r[1]/r[0] i zcr del senyal original.
+  /// Es fan servir les de la trama actual i les de les dues anteriors i dues posteriors
+  /// (5 x 8 = 40 pesos + terme independent).
+  static const int NF = 8;
+  static const int OFFS[5] = {0, 2, 1, -1, -2};  // trames: k, k+2, k+1, k-1, k-2
+  static const float W[5][NF] = {
+    {-0.0361933F, 38.8041F, 2.32819F, 1.85091F, 13.0927F, 0.0450061F, -0.864831F, -2.80501F},
+    {0.0115949F, 18.0919F, -1.63622F, 1.3584F, -26.4076F, 0.0158867F, -0.378127F, -1.94958F},
+    {0.0625253F, -6.56669F, -0.625628F, 1.87166F, -6.68702F, 0.0238843F, -1.71538F, -3.38568F},
+    {0.218176F, -3.08433F, 3.07662F, 1.58884F, -22.2711F, -0.0682284F, 0.331512F, -0.100415F},
+    {-0.0187213F, -1.74845F, -1.65701F, 1.00823F, 36.7328F, -0.00147695F, 0.243429F, 0.443494F}
   };
-  static const float B = -43.3679F;
+  static const float B = -43.2825F;
   auto fvec = [&](int k) {
-    k = max(0, min(n_frames - 1, k));
     const FrameFeatures &ff = feats[k];
-    return array<float, 5>{ff.pot, ff.r1norm, ff.rmaxnorm, ff.nccf, ff.zcr};
+    return array<float, NF>{ff.pot, ff.r1norm, ff.rmaxnorm, ff.nccf, ff.zcr, raw[k][0], raw[k][1], raw[k][2]};
   };
 
   vector<float> f0;
@@ -192,17 +200,54 @@ int main(int argc, const char *argv[]) {
     const FrameFeatures &ff = feats[k];
     bool uv;
     if (voiced_th > 0) {
-      array<float, 5> ctx[3] = {fvec(k), fvec(k + 1), fvec(k - 1)};
       float z = B;
-      for (int c = 0; c < 3; ++c)
-        for (int i = 0; i < 5; ++i)
-          z += W[5 * c + i] * ctx[c][i];
+      for (int c = 0; c < 5; ++c) {
+        int j = k + OFFS[c];
+        if (j < 0 || j >= n_frames) j = k;  // at the ends, the current frame is used
+        array<float, NF> v = fvec(j);
+        for (int i = 0; i < NF; ++i)
+          z += W[c][i] * v[i];
+      }
       float prob = 1.0F / (1.0F + exp(-z));
       uv = prob < voiced_th;
     } else {
       uv = ff.pot < pot_th || ff.r1norm < r1norm_th || ff.rmaxnorm < rmaxnorm_th;
     }
     f0.push_back(uv ? 0.0F : ff.f0);
+  }
+
+  /// \DONE Refinament fi del període.
+  /// La trama de 30 ms és necessària per trobar el període amb fiabilitat, però si el
+  /// pitch varia dins de la trama el resultat és una mitjana. Un cop tenim el candidat T,
+  /// busquem el desplaçament l (entre T-3 i T+3 mostres) que maximitza la correlació
+  /// normalitzada entre dos segments curts (refine_ms), un a cada costat del centre de
+  /// la trama i separats l mostres, i interpolem amb una paràbola.
+  if (refine_ms > 0) {
+    int N = rate * refine_ms / 1000;
+    for (int k = 0; k < n_frames; ++k) {
+      if (f0[k] == 0) continue;
+      int c = n_start + k * n_shift + n_len / 2;  // centre of the frame
+      int L = (int) round(rate / f0[k]);
+      auto nc = [&](int l) {
+        int a0 = c - N / 2 - l / 2;
+        double ab = 0, aa = 0, bb = 0;
+        for (int n = 0; n < N; ++n) {
+          float a = x[a0 + n], b = x[a0 + l + n];
+          ab += a * b; aa += a * a; bb += b * b;
+        }
+        return (float) (ab / sqrt(aa * bb + 1e-20));
+      };
+      int lmin = max(2, L - 3), lmax = L + 3;
+      vector<float> v;
+      for (int l = lmin; l <= lmax; ++l) v.push_back(nc(l));
+      int i = max_element(v.begin(), v.end()) - v.begin();
+      float T = lmin + i;
+      if (i > 0 && i + 1 < (int) v.size()) {
+        float den = v[i-1] - 2 * v[i] + v[i+1];
+        if (den < 0) T += 0.5F * (v[i-1] - v[i+1]) / den;
+      }
+      f0[k] = rate / T;
+    }
   }
 
   /// \DONE Postprocessat: filtre de mediana.
