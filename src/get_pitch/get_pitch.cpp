@@ -35,7 +35,9 @@ Options:
     -p, --pot FLOAT       Llindar de potència (dB) relatiu a la trama més forta [default: -100]
     -c, --clip FLOAT      Nivell de center clipping (fracció del màxim de la trama) [default: 0.3]
     -l, --lowpass FLOAT   Freqüència de tall del filtre passa-baixos en Hz (0 = sense filtre) [default: 600]
-    -w, --median INT      Longitud del filtre de mediana (1 = sense filtre) [default: 1]
+    -w, --median INT      Longitud del filtre de mediana (1 = sense filtre) [default: 3]
+    -t, --medtol FLOAT    El filtre de mediana només canvia el valor si s'allunya de la mediana
+                          més d'aquesta fracció (0 = sempre) [default: 0.3]
     -f, --framelen FLOAT  Longitud de la trama en ms [default: 30]
     -o, --offset FLOAT    Desplaçament del centre de la trama en ms [default: 0]
     -F, --features FILE   Escriu les característiques de cada trama en aquest fitxer
@@ -91,6 +93,7 @@ int main(int argc, const char *argv[]) {
   float clip = stof(args["--clip"].asString());
   float fc = stof(args["--lowpass"].asString());
   int median_len = stoi(args["--median"].asString());
+  float med_tol = stof(args["--medtol"].asString());
   float frame_ms = stof(args["--framelen"].asString());
   float offset_ms = stof(args["--offset"].asString());
   bool hamming = args["--hamming"].asBool();
@@ -202,7 +205,14 @@ int main(int argc, const char *argv[]) {
     f0.push_back(uv ? 0.0F : ff.f0);
   }
 
-  /// \DONE Postprocessat: filtre de mediana (només es modifiquen les trames sonores)
+  /// \DONE Postprocessat: filtre de mediana.
+  /// - No recursiu: la mediana es calcula sempre sobre els valors ORIGINALS (f0) i el
+  ///   resultat s'escriu en un vector nou (f0f). Si escrivíssim a f0 mateix, els valors
+  ///   ja filtrats entrarien a la finestra de les trames següents (filtre recursiu).
+  /// - Només es fa servir quan l'error és gran: si el valor s'allunya de la mediana menys
+  ///   de med_tol (en relatiu), es deixa tal qual, perquè quan no hi ha error la mediana
+  ///   empitjora l'estimació fina.
+  /// - Només es modifiquen trames sonores i la mediana es calcula amb les veïnes sonores.
   if (median_len > 1) {
     int h = median_len / 2;
     vector<float> f0f(f0);
@@ -212,7 +222,9 @@ int main(int argc, const char *argv[]) {
       for (int k = i - h; k <= i + h; ++k)
         if (k >= 0 && k < (int) f0.size() && f0[k] > 0) v.push_back(f0[k]);
       nth_element(v.begin(), v.begin() + v.size() / 2, v.end());
-      f0f[i] = v[v.size() / 2];
+      float med = v[v.size() / 2];
+      if (fabs(f0[i] - med) > med_tol * med)
+        f0f[i] = med;
     }
     f0.swap(f0f);
   }
