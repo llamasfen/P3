@@ -12,98 +12,106 @@ namespace upc {
 
   ///
   /// PitchAnalyzer: class that computes the pitch (in Hz) from a signal frame.
-  /// No pre-processing or post-processing has been included
   ///
+  /// Features of a frame used for the voiced/unvoiced decision
+  struct FrameFeatures {
+    float pot;      ///< power (dB)
+    float r1norm;   ///< r[1]/r[0]
+    float rmaxnorm; ///< r[lag]/r[0] (after central clipping)
+    float nccf;     ///< normalized cross-correlation at the pitch lag
+    float zcr;      ///< zero crossing rate (crossings per sample)
+    float f0;       ///< pitch candidate (Hz)
+  };
+
   class PitchAnalyzer {
   public:
-	/// Wndow type
+    /// Window type
     enum Window {
-		RECT, 						///< Rectangular window
-		HAMMING						///< Hamming window
-	};
+      RECT,     ///< Rectangular window
+      HAMMING   ///< Hamming window
+    };
 
     void set_window(Window type); ///< pre-compute window
 
   private:
     std::vector<float> window; ///< precomputed window
-    unsigned int frameLen, ///< length of frame (in samples). Has to be set in the constructor call
-      samplingFreq, ///< sampling rate (in samples per second). Has to be set in the constructor call
-      npitch_min, ///< minimum value of pitch period, in samples
-      npitch_max; ///< maximum value of pitch period, in samples
-      float rmaxnorm_threshold; ///< threshold for rmaxnorm
- 
-	///
-	/// Computes correlation from lag=0 to r.size()
-	///
+    unsigned int frameLen,     ///< length of frame (in samples)
+      samplingFreq,            ///< sampling rate (in samples per second)
+      npitch_min,              ///< minimum value of pitch period, in samples
+      npitch_max;              ///< maximum value of pitch period, in samples
+    float rmaxnorm_threshold;  ///< threshold for rmaxnorm (voiced if above)
+    float r1norm_threshold;    ///< threshold for r1norm (voiced if above)
+    float pot_threshold;       ///< threshold for power, in dB relative to pot_ref
+    float clip_alpha;          ///< central clipping level (fraction of the frame maximum)
+    float pot_ref;             ///< reference power (dB), maximum frame power of the file
+
+    /// Computes correlation from lag=0 to r.size()
     void autocorrelation(const std::vector<float> &x, std::vector<float> &r) const;
 
-	///
-	/// Returns the pitch (in Hz) of input frame x
-	///
+    /// Returns the pitch (in Hz) of input frame x
     float compute_pitch(std::vector<float> & x) const;
-	
-	///
-	/// Returns true is the frame is unvoiced
-	///
+
+    /// Returns true is the frame is unvoiced
     bool unvoiced(float pot, float r1norm, float rmaxnorm) const;
 
-
   public:
-    PitchAnalyzer(	unsigned int fLen,			///< Frame length in samples
-					unsigned int sFreq,			///< Sampling rate in Hertzs
-					Window w=PitchAnalyzer::HAMMING,	///< Window type
-					float min_F0 = MIN_F0,		///< Pitch range should be restricted to be above this value
-					float max_F0 = MAX_F0,		///< Pitch range should be restricted to be below this value
-				  float rmaxnorm_threshold = 0.4F	///< Threshold for rmaxnorm to decide voiced/unvoiced 
-        )
-	{
+    PitchAnalyzer(unsigned int fLen,                 ///< Frame length in samples
+                  unsigned int sFreq,                ///< Sampling rate in Hertzs
+                  Window w = PitchAnalyzer::HAMMING, ///< Window type
+                  float min_F0 = MIN_F0,             ///< Minimum pitch (Hz)
+                  float max_F0 = MAX_F0,             ///< Maximum pitch (Hz)
+                  float rmaxnorm_th = 0.4F,          ///< Threshold for rmaxnorm
+                  float r1norm_th = 0.0F,            ///< Threshold for r1norm
+                  float pot_th = -100.0F,            ///< Threshold for relative power (dB)
+                  float clip = 0.0F)                 ///< Central clipping level
+    {
       frameLen = fLen;
-      this->rmaxnorm_threshold = rmaxnorm_threshold;
       samplingFreq = sFreq;
+      rmaxnorm_threshold = rmaxnorm_th;
+      r1norm_threshold = r1norm_th;
+      pot_threshold = pot_th;
+      clip_alpha = clip;
+      pot_ref = 0.0F;
       set_f0_range(min_F0, max_F0);
       set_window(w);
     }
 
-	///
+    /// Computes the features and the pitch candidate of a frame (no voicing decision)
+    FrameFeatures analyze(std::vector<float>::const_iterator begin, std::vector<float>::const_iterator end) const;
+
+    /// Sets the reference power (dB) used by the relative power threshold
+    void set_pot_ref(float p) { pot_ref = p; }
+
+    /// Power (dB) of a frame, after windowing
+    float frame_power(std::vector<float>::const_iterator begin, std::vector<float>::const_iterator end) const;
+
     /// Operator (): computes the pitch for the given vector x
-	///
     float operator()(const std::vector<float> & _x) const {
       if (_x.size() != frameLen)
         return -1.0F;
-
-      std::vector<float> x(_x); //local copy of input frame
+      std::vector<float> x(_x);
       return compute_pitch(x);
     }
 
-	///
     /// Operator (): computes the pitch for the given "C" vector (float *).
-    /// N is the size of the vector pointer by pt.
-	///
     float operator()(const float * pt, unsigned int N) const {
       if (N != frameLen)
         return -1.0F;
-
-      std::vector<float> x(N); //local copy of input frame, size N
-      std::copy(pt, pt+N, x.begin()); ///copy input values into local vector x
+      std::vector<float> x(N);
+      std::copy(pt, pt+N, x.begin());
       return compute_pitch(x);
     }
 
-	///
     /// Operator (): computes the pitch for the given vector, expressed by the begin and end iterators
-	///
     float operator()(std::vector<float>::const_iterator begin, std::vector<float>::const_iterator end) const {
-
       if (end-begin != frameLen)
         return -1.0F;
-
-      std::vector<float> x(end-begin); //local copy of input frame, size N
-      std::copy(begin, end, x.begin()); //copy input values into local vector x
+      std::vector<float> x(end-begin);
+      std::copy(begin, end, x.begin());
       return compute_pitch(x);
     }
-    
-	///
+
     /// Sets pitch range: takes min_F0 and max_F0 in Hz, sets npitch_min and npitch_max in samples
-	///
     void set_f0_range(float min_F0, float max_F0);
   };
 }

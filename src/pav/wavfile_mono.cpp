@@ -12,7 +12,7 @@ int readwav_mono(const string &filename, unsigned int &sampling_freq, vector<flo
   Return: 0 => OK; < 0 => Error
   **/
   SNDFILE *sndfile_in;
-  SF_INFO sf_info;
+  SF_INFO sf_info = {}; // format must be 0 when opening a file for reading
   x.clear();
   sampling_freq = 0;
 
@@ -44,7 +44,7 @@ int writewav_mono(const string &filename, unsigned int sampling_freq, const vect
   Return: 0 => OK; <0 => Error
   **/
   SNDFILE *sndfile_out;
-  SF_INFO sf_info;
+  SF_INFO sf_info = {}; // format must be 0 when opening a file for reading
 
  sf_info.frames = x.size();
  sf_info.samplerate = sampling_freq;
