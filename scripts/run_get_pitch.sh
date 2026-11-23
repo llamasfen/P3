@@ -5,7 +5,9 @@
 set -o pipefail
 
 # Put here the program (maybe with path)
-GETF0="get_pitch"
+# Les opcions que es passin a aquest script es passen a get_pitch
+# (per exemple: scripts/run_get_pitch.sh --lowpass 400)
+GETF0="get_pitch $*"
 
 for fwav in pitch_db/train/*.wav; do
     ff0=${fwav/.wav/.f0}

@@ -1,0 +1,14 @@
+#! /usr/bin/env bash
+
+# Escombrat d'un paràmetre de get_pitch per trobar el valor que maximitza el TOTAL
+# (com el cardem-li de la P2).
+#
+# Ús:      ./cardem-li <opció> <valor1> <valor2> ...
+# Exemple: ./cardem-li --lowpass 250 300 350 400 600 900
+
+opcio=$1
+shift
+for valor in "$@"; do
+  echo -ne "$opcio $valor\t"
+  scripts/run_get_pitch.sh $opcio $valor | grep TOTAL
+done
